@@ -1,0 +1,13 @@
+## Interface: 11502, 20504, 30403, 40400, 100207, 110000, 110002
+## Title: BTRM ©
+## Notes: addon pour gentil guildoux <3
+## Author: Pydd
+## Version: 1.0
+## SavedVariables: BTRMDB, BTRMLDBIconDB
+## IconTexture: Interface\AddOns\BTRM\Media\icon
+
+
+## OptionalDeps: Ace3, LibSharedMedia-3.0, LibDBIcon-1.0
+
+embeds.xml
+BTRM.lua
