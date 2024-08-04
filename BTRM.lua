@@ -1,10 +1,15 @@
-local addonName, addon = ...
+---@class addon
+local addon = select(2, ...)
 
-local ldbi = LibStub("LibDBIcon-1.0")
 local ldb = LibStub:GetLibrary("LibDataBroker-1.1", true)
-ldbi:Show('test')
-
+local LibDeflate = LibStub:GetLibrary("LibDeflate")
+local LibSerialize = LibStub("LibSerialize")
 UIParentLoadAddOn("Blizzard_DebugTools")
+
+local ac = LibStub("AceComm-3.0", true)
+if ac then ac:Embed(addon) end
+local as = LibStub("AceSerializer-3.0", true)
+if as then as:Embed(addon) end
 
 local minimapButton = ldb:NewDataObject('BTRM', {
     type = "data source",
@@ -22,14 +27,6 @@ end)
 
 f:RegisterEvent("PLAYER_LOGIN")
 
-local function hexToRGB(hex)
-    hex = hex:gsub("#", "")
-    local r = tonumber(hex:sub(1, 2), 16) / 255
-    local g = tonumber(hex:sub(3, 4), 16) / 255
-    local b = tonumber(hex:sub(5, 6), 16) / 255
-
-    return r, g, b
-end
 
 local function getNumberOfKeys(tbl)
     local count = 0
@@ -39,43 +36,125 @@ local function getNumberOfKeys(tbl)
     return count
 end
 
+
 local function parseInput(data)
     local result = {}
     local itemNeedLines = { strsplit("\n", data) }
     for _, itemNeedLine in ipairs(itemNeedLines) do
-        local id, classColor, playerName, needColor, need, dpsGain = strsplit(";", itemNeedLine)
+        local id, text = strsplit(";", itemNeedLine)
         local itemID = tonumber(id)
         if not result[itemID] then
-            result[itemID] = {}
+            result[itemID] = text
         end
-        table.insert(result[itemID], {
-            classColor = classColor,
-            playerName = playerName,
-            needColor = needColor,
-            need = need,
-            dpsGain = dpsGain
-        })
     end
 
     return result
 end
 
-local function addText(_, link)
-    local itemID = link['id']
 
+
+local function createTooltipFrame()
+    local customFrame = CreateFrame("Frame", nil, GameTooltip, "BackdropTemplate")
+    customFrame:SetPoint("TOPLEFT", GameTooltip, "BOTTOMLEFT", 0, 0)
+
+    customFrame:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",  -- Texture de fond sombre
+        edgeFile = "Interface\\AddOns\\Details\\images\\border_3",
+        tile = true, tileSize = 16, edgeSize = 8,
+        insets = { left = 1, right = 1, top = 1, bottom = 1}
+    })
+
+    customFrame:SetBackdropColor(0.11, 0.11, 0.13, 0.9)  -- Fond semi-transparent
+    customFrame:SetBackdropBorderColor(0, 0, 0, 1)
+
+     LeftText = customFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+     LeftText:SetPoint("LEFT", customFrame, "LEFT", 10, 0)
+     LeftText:SetJustifyH("LEFT")
+     LeftText:SetFont("Fonts\\FRIZQT__.TTF", 12)
+
+    return customFrame
+end
+
+
+local tooltipFrame = createTooltipFrame();
+
+local function getTextFromLink(link)
+    local itemID = link['id']
     if BTRMDB and BTRMDB[itemID] then
-        local upgrades = BTRMDB[itemID]
-        for _, item in ipairs(upgrades) do
-            local rL, gL, bL = hexToRGB(item.classColor)
-            local rR, gR, bR = hexToRGB(item.needColor)
-            local need = item.need
-            if (item.dpsGain ~= '0') then need = need .. ' (' .. item.dpsGain .. ')' end
-            GameTooltip:AddDoubleLine(item.playerName, need, rL, gL, bL, rR, gR, bR)
-        end
+        return BTRMDB[itemID]:gsub("\\n", "\n"):gsub("||", "|")
     end
 end
 
-TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, addText)
+local function addText(tooltip, link)
+
+    if not link or not tooltip then
+        tooltipFrame:Hide()
+    end
+
+
+    local text = getTextFromLink(link)
+
+    if text then
+        LeftText:SetText(text)
+        tooltipFrame:SetSize( tooltipFrame:GetParent():GetWidth(), LeftText:GetStringHeight() + 30)
+
+        if IsShiftKeyDown() then
+            tooltipFrame:SetPoint("BOTTOMLEFT", GameTooltip, "TOPLEFT", 0, 0)
+        else
+            tooltipFrame:SetPoint("TOPLEFT", GameTooltip, "BOTTOMLEFT", 0, 0)
+        end
+
+        tooltipFrame:Show()
+    else
+        tooltipFrame:Hide()
+    end
+end
+
+local function OnTooltipHide(self)
+    tooltipFrame:Hide()
+end
+
+local function OnTooltipUpdate(self, elapsed)
+    tooltipFrame:ClearAllPoints()
+    if IsShiftKeyDown() then
+        tooltipFrame:SetPoint("BOTTOM", self, "TOP")
+    else
+        tooltipFrame:SetPoint("TOP", self, "BOTTOM")
+    end
+end
+
+
+TooltipDataProcessor.AddTooltipPostCall(TooltipDataProcessor.AllTypes, addText)
+GameTooltip:HookScript("OnHide", OnTooltipHide)
+GameTooltip:HookScript("OnUpdate", OnTooltipUpdate)
+
+
+-- With compression (recommended):
+function addon:Transmit(data)
+    local serialized = LibSerialize:Serialize(data)
+    local compressed = LibDeflate:CompressDeflate(serialized)
+    local encoded = LibDeflate:EncodeForWoWAddonChannel(compressed)
+    addon:SendCommMessage("BTRM", encoded, "GUILD")
+end
+
+function addon:OnCommReceived(prefix, payload, distribution, sender)
+    if GetUnitName("PLAYER") ~= sender and 'BTRM' == prefix then
+        local decoded = LibDeflate:DecodeForWoWAddonChannel(payload)
+        if not decoded then return end
+        local decompressed = LibDeflate:DecompressDeflate(decoded)
+        if not decompressed then return end
+        local success, data = LibSerialize:Deserialize(decompressed)
+        if not success then return end
+        BTRMDB = data
+        local count = getNumberOfKeys(BTRMDB)
+        if count == 1 then
+            print('[BTRM] : ' .. count .. ' item shared by ' .. sender)
+        end
+        if count > 1 then
+            print('[BTRM] : ' .. count .. ' items shared by ' .. sender)
+        end
+    end
+end
 
 local function createInputFrame()
     local f = CreateFrame("Frame", "BTRMFrame", UIParent, "DialogBoxFrame")
@@ -118,13 +197,16 @@ local function createInputFrame()
             if not BTRMDB then BTRMDB = {} end
             BTRMDB = itemNeedsData
             f:Hide()
-            print('[BTRM] : '..getNumberOfKeys(itemNeedsData)..' items imported!')
+            addon:Transmit(itemNeedsData)
+            print('[BTRM] : ' .. getNumberOfKeys(itemNeedsData) .. ' items imported!')
         end
     end)
+    addon:RegisterComm("BTRM")
     return f
 end
 
 local input = createInputFrame()
+
 
 function minimapButton.OnClick(self, button)
     if button == "LeftButton" then

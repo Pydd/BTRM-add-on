@@ -41,6 +41,12 @@
         "Settings",
         "DisplayTableInspectorWindow",
         "UIParentLoadAddOn",
-        "ID"
+        "ID",
+        "NOT_BOUND",
+        "OKAY",
+        "SetDesaturation",
+        "CLOSE",
+        "ACCEPT",
+        "FONT_COLOR_CODE_CLOSE"
     ]
 }
